@@ -14,7 +14,7 @@ func TestYDBBackend(t *testing.T) {
 	logger := logging.NewVaultLogger(log.Debug)
 
 	dsn := os.Getenv("VAULT_YDB_DSN")
-	table := "vault_storage_kv"
+	table := os.Getenv("VAULT_YDB_TABLE")
 
 	logger.Info(fmt.Sprintf("YDB DSN: %v", dsn))
 	logger.Info(fmt.Sprintf("YDB VAULT TABLE: %v", table))
