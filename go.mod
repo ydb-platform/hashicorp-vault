@@ -251,7 +251,10 @@ require (
 	github.com/minio/asm2plan9s v0.0.0-20200509001527-cdd76441f9d8 // indirect
 	github.com/minio/c2goasm v0.0.0-20190812172519-36a3d3bbc4f3 // indirect
 	github.com/moby/go-archive v0.1.0 // indirect
+	github.com/yandex-cloud/go-genproto v0.0.0-20240819112322-98a264d392f6 // indirect
 	github.com/ydb-platform/ydb-go-genproto v0.0.0-20250911135631-b3beddd517d9 // indirect
+	github.com/ydb-platform/ydb-go-yc v0.12.3 // indirect
+	github.com/ydb-platform/ydb-go-yc-metadata v0.6.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/telemetry v0.0.0-20250908211612-aef8a434d053 // indirect

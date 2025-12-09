@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/vault/sdk/physical"
 	ydb "github.com/ydb-platform/ydb-go-sdk/v3"
 	"github.com/ydb-platform/ydb-go-sdk/v3/query"
+	yc "github.com/ydb-platform/ydb-go-yc"
 )
 
 const VAULT_TABLE = "vault_kv"
@@ -24,22 +25,19 @@ type YDBBackend struct {
 
 var _ physical.Backend = (*YDBBackend)(nil)
 
-// var _ physical.Transactional = (*YDBBackend)(nil)
-
 func NewYDBBackend(conf map[string]string, logger log.Logger) (physical.Backend, error) {
-	dsn, ok := conf["dsn"]
-	if !ok {
+	dsn := strings.TrimSpace(conf["dsn"])
+	if dsn == "" {
 		if envDSN := os.Getenv("VAULT_YDB_DSN"); envDSN != "" {
 			dsn = envDSN
 		} else {
-			const errStr = "YDB: dsn it not set"
-			logger.Error(errStr)
+			const errStr = "YDB: dsn is not set"
 			return &YDBBackend{}, fmt.Errorf(errStr)
 		}
 	}
 
-	table, ok := conf["table"]
-	if !ok {
+	table := strings.TrimSpace(conf["table"])
+	if table == "" {
 		if envTable := os.Getenv("VAULT_YDB_TABLE"); envTable != "" {
 			table = envTable
 		} else {
@@ -47,14 +45,52 @@ func NewYDBBackend(conf map[string]string, logger log.Logger) (physical.Backend,
 		}
 	}
 
-	db, err := ydb.Open(context.TODO(), dsn)
+	var opts []ydb.Option
+
+	internalCAVal := ""
+	if v, ok := conf["internal_ca"]; ok {
+		internalCAVal = v
+	} else if envv := os.Getenv("VAULT_YDB_INTERNAL_CA"); envv != "" {
+		internalCAVal = envv
+	}
+	internalCA := false
+	if internalCAVal != "" && (strings.EqualFold(internalCAVal, "true") || internalCAVal == "1" || strings.EqualFold(internalCAVal, "yes")) {
+		internalCA = true
+	}
+
+	saKeyFile := ""
+	if v, ok := conf["service_account_key_file"]; ok && strings.TrimSpace(v) != "" {
+		saKeyFile = strings.TrimSpace(v)
+	} else if envv := os.Getenv("VAULT_YDB_SA_KEYFILE"); envv != "" {
+		saKeyFile = envv
+	}
+
+	if internalCA || saKeyFile != "" {
+		logger.Info("YDB: configuring Yandex.Cloud helper options for secure connection", "internal_ca", internalCA, "sa_keyfile_set", saKeyFile != "")
+		if internalCA {
+			opts = append(opts, yc.WithInternalCA())
+		}
+		if saKeyFile != "" {
+			if _, err := os.Stat(saKeyFile); err != nil {
+				logger.Warn("YDB: service account key file not accessible; attempting to proceed and let yc package surface the error", "path", saKeyFile, "err", err)
+			}
+			opts = append(opts, yc.WithServiceAccountKeyFileCredentials(saKeyFile))
+		}
+	} else {
+		if strings.HasPrefix(strings.ToLower(dsn), "grpcs://") {
+			logger.Info("YDB: detected grpcs DSN; attempting secure connection with provided DSN. If you need YC-specific auth (internal CA or service account), set \"internal_ca\" or \"service_account_key_file\" in config or VAULT_YDB_INTERNAL_CA/VAULT_YDB_SA_KEYFILE env vars.")
+		}
+	}
+
+	// Open YDB driver with options (may be empty)
+	db, err := ydb.Open(context.TODO(), dsn, opts...)
 	if err != nil {
 		errStr := "YDB: failed to open database connection"
-		logger.Error(errStr)
+		logger.Error(errStr, "error", err)
 		return &YDBBackend{}, fmt.Errorf(errStr+": %w", err)
 	}
 
-	// TODO: Check for vault storage table exists
+	// TODO: Ensure the table exists or create schema as required.
 
 	return &YDBBackend{
 		db:     db,

@@ -15,25 +15,20 @@ func TestYDBBackend(t *testing.T) {
 
 	dsn := os.Getenv("VAULT_YDB_DSN")
 	table := os.Getenv("VAULT_YDB_TABLE")
+	sa_account_key_file := os.Getenv("VAULT_YDB_YC_SA_ACCOUNT_KEY_FILE_PATH")
 
 	logger.Info(fmt.Sprintf("YDB DSN: %v", dsn))
 	logger.Info(fmt.Sprintf("YDB VAULT TABLE: %v", table))
 
 	backend, err := NewYDBBackend(map[string]string{
-		"dsn":   dsn,
-		"table": table,
+		"dsn":                      dsn,
+		"table":                    table,
+		"internal_ca":              "yes",
+		"service_account_key_file": sa_account_key_file,
 	}, logger)
 	if err != nil {
 		t.Fatalf("Failed to create new backend: %v", err)
 	}
-
-	// defer func() {
-	// 	y := backend.(*YDBBackend)
-	// 	err := y.db.Query().Exec(context.TODO(), fmt.Sprintf("TRUNCATE TABLE %v ", table))
-	// 	if err != nil {
-	// 		t.Fatalf("Failed to truncate table: %v", err)
-	// 	}
-	// }()
 
 	logger.Info("Running basic backend tests")
 	physical.ExerciseBackend(t, backend)
