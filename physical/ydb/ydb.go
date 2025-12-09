@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/vault/sdk/physical"
 	ydb "github.com/ydb-platform/ydb-go-sdk/v3"
 	"github.com/ydb-platform/ydb-go-sdk/v3/query"
+	"github.com/ydb-platform/ydb-go-sdk/v3/table"
 	yc "github.com/ydb-platform/ydb-go-yc"
 )
 
@@ -23,7 +24,11 @@ type YDBBackend struct {
 	logger log.Logger
 }
 
-var _ physical.Backend = (*YDBBackend)(nil)
+var (
+	_ physical.Backend             = (*YDBBackend)(nil)
+	_ physical.Transactional       = (*YDBBackend)(nil)
+	_ physical.TransactionalLimits = (*YDBBackend)(nil)
+)
 
 func NewYDBBackend(conf map[string]string, logger log.Logger) (physical.Backend, error) {
 	dsn := strings.TrimSpace(conf["dsn"])
@@ -254,6 +259,77 @@ func (y *YDBBackend) List(ctx context.Context, prefix string) ([]string, error) 
 	return lst, nil
 }
 
-func (y *YDBBackend) Transaction(ctx context.Context, tx []*physical.TxnEntry) error {
-	return nil
+func (y *YDBBackend) GetInternal(ctx context.Context, key string) (*physical.Entry, error) {
+	return y.Get(ctx, key)
+}
+
+func (y *YDBBackend) PutInternal(ctx context.Context, entry *physical.Entry) error {
+	return y.Put(ctx, entry)
+}
+
+func (y *YDBBackend) DeleteInternal(ctx context.Context, key string) error {
+	return y.Delete(ctx, key)
+}
+
+type ydbTxWrapper struct {
+	tx    table.TransactionActor
+	table string
+}
+
+func (w *ydbTxWrapper) GetInternal(ctx context.Context, key string) (*physical.Entry, error) {
+	stmt := fmt.Sprintf("SELECT key, value FROM %s WHERE key = $key", w.table)
+	params := ydb.ParamsBuilder().Param("$key").Text(key).Build()
+	res, err := w.tx.Execute(ctx, stmt, params)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Close()
+	for res.NextResultSet(ctx) {
+		for res.NextRow() {
+			var k string
+			var v *[]byte
+			if err := res.Scan(&k, &v); err != nil {
+				return nil, err
+			}
+			var val []byte
+			if v != nil {
+				val = *v
+			}
+			return &physical.Entry{Key: k, Value: val}, nil
+		}
+		if err := res.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return nil, nil
+}
+
+func (w *ydbTxWrapper) PutInternal(ctx context.Context, entry *physical.Entry) error {
+	stmt := fmt.Sprintf("UPSERT INTO %s (key, value) VALUES ($key, $value)", w.table)
+	params := ydb.ParamsBuilder().
+		Param("$key").Text(entry.Key).
+		Param("$value").Bytes(entry.Value).Build()
+	_, err := w.tx.Execute(ctx, stmt, params)
+	return err
+}
+
+func (w *ydbTxWrapper) DeleteInternal(ctx context.Context, key string) error {
+	stmt := fmt.Sprintf("DELETE FROM %s WHERE key = $key", w.table)
+	params := ydb.ParamsBuilder().Param("$key").Text(key).Build()
+	_, err := w.tx.Execute(ctx, stmt, params)
+	return err
+}
+
+func (y *YDBBackend) Transaction(ctx context.Context, txns []*physical.TxnEntry) error {
+	if len(txns) == 0 {
+		return nil
+	}
+	return y.db.Table().DoTx(ctx, func(ctx context.Context, tx table.TransactionActor) error {
+		w := &ydbTxWrapper{tx: tx, table: y.table}
+		return physical.GenericTransactionHandler(ctx, w, txns)
+	})
+}
+
+func (y *YDBBackend) TransactionLimits() (int, int) {
+	return 63, 128 * 1024
 }

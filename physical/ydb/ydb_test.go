@@ -2,10 +2,10 @@ package ydb
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	log "github.com/hashicorp/go-hclog"
+	helper "github.com/hashicorp/vault/helper/testhelpers/ydb"
 	"github.com/hashicorp/vault/sdk/helper/logging"
 	"github.com/hashicorp/vault/sdk/physical"
 )
@@ -13,18 +13,17 @@ import (
 func TestYDBBackend(t *testing.T) {
 	logger := logging.NewVaultLogger(log.Debug)
 
-	dsn := os.Getenv("VAULT_YDB_DSN")
-	table := os.Getenv("VAULT_YDB_TABLE")
-	sa_account_key_file := os.Getenv("VAULT_YDB_YC_SA_ACCOUNT_KEY_FILE_PATH")
+	cleanup, cfg := helper.PrepareTestContainer(t)
+	defer cleanup()
 
-	logger.Info(fmt.Sprintf("YDB DSN: %v", dsn))
-	logger.Info(fmt.Sprintf("YDB VAULT TABLE: %v", table))
+	logger.Info(fmt.Sprintf("YDB DSN: %v", cfg.DSN))
+	logger.Info(fmt.Sprintf("YDB VAULT TABLE: %v", cfg.Table))
 
 	backend, err := NewYDBBackend(map[string]string{
-		"dsn":                      dsn,
-		"table":                    table,
-		"internal_ca":              "yes",
-		"service_account_key_file": sa_account_key_file,
+		"dsn":                      cfg.DSN,
+		"table":                    cfg.Table,
+		"internal_ca":              "no",
+		"service_account_key_file": cfg.SAKeyFile,
 	}, logger)
 	if err != nil {
 		t.Fatalf("Failed to create new backend: %v", err)
@@ -35,4 +34,5 @@ func TestYDBBackend(t *testing.T) {
 
 	logger.Info("Running list prefix backend tests")
 	physical.ExerciseBackend_ListPrefix(t, backend)
+	physical.ExerciseTransactionalBackend(t, backend)
 }
