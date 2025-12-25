@@ -210,6 +210,7 @@ require (
 	github.com/shirou/gopsutil/v3 v3.22.6
 	github.com/stretchr/testify v1.11.1
 	github.com/tink-crypto/tink-go/v2 v2.4.0
+	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.1
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.117.2
 	github.com/ydb-platform/ydb-go-yc v0.12.3
 	go.etcd.io/bbolt v1.4.0

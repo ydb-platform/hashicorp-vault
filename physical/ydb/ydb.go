@@ -10,9 +10,9 @@ import (
 
 	log "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/sdk/physical"
+	env "github.com/ydb-platform/ydb-go-sdk-auth-environ"
 	ydb "github.com/ydb-platform/ydb-go-sdk/v3"
 	"github.com/ydb-platform/ydb-go-sdk/v3/query"
-	"github.com/ydb-platform/ydb-go-sdk/v3/table"
 	yc "github.com/ydb-platform/ydb-go-yc"
 )
 
@@ -50,43 +50,10 @@ func NewYDBBackend(conf map[string]string, logger log.Logger) (physical.Backend,
 		}
 	}
 
-	var opts []ydb.Option
+	opts := getYDBOptionsFromConfMap(conf)
 
-	internalCAVal := ""
-	if v, ok := conf["internal_ca"]; ok {
-		internalCAVal = v
-	} else if envv := os.Getenv("VAULT_YDB_INTERNAL_CA"); envv != "" {
-		internalCAVal = envv
-	}
-	internalCA := false
-	if internalCAVal != "" && (strings.EqualFold(internalCAVal, "true") || internalCAVal == "1" || strings.EqualFold(internalCAVal, "yes")) {
-		internalCA = true
-	}
-
-	saKeyFile := ""
-	if v, ok := conf["service_account_key_file"]; ok && strings.TrimSpace(v) != "" {
-		saKeyFile = strings.TrimSpace(v)
-	} else if envv := os.Getenv("VAULT_YDB_SA_KEYFILE"); envv != "" {
-		saKeyFile = envv
-	}
-
-	if internalCA || saKeyFile != "" {
-		logger.Info("YDB: configuring Yandex.Cloud helper options for secure connection", "internal_ca", internalCA, "sa_keyfile_set", saKeyFile != "")
-		if internalCA {
-			opts = append(opts, yc.WithInternalCA())
-		}
-		if saKeyFile != "" {
-			if _, err := os.Stat(saKeyFile); err != nil {
-				logger.Warn("YDB: service account key file not accessible; attempting to proceed and let yc package surface the error", "path", saKeyFile, "err", err)
-			}
-			opts = append(opts, yc.WithServiceAccountKeyFileCredentials(saKeyFile))
-		}
-	} else {
-		if strings.HasPrefix(strings.ToLower(dsn), "grpcs://") {
-			logger.Info("YDB: detected grpcs DSN; attempting secure connection with provided DSN. If you need YC-specific auth (internal CA or service account), set \"internal_ca\" or \"service_account_key_file\" in config or VAULT_YDB_INTERNAL_CA/VAULT_YDB_SA_KEYFILE env vars.")
-		}
-	}
-
+	// Override from ENV
+	opts = append(opts, env.WithEnvironCredentials())
 	ctx := context.TODO()
 	db, err := ydb.Open(ctx, dsn, opts...)
 	if err != nil {
@@ -127,7 +94,7 @@ func ensureTableExists(ctx context.Context, db *ydb.Driver, tableName string, lo
 
 	logger.Info("YDB: creating table", "table", tableName)
 
-	query := fmt.Sprintf(`
+	queryStmt := fmt.Sprintf(`
 		CREATE TABLE %s (
 			key Text NOT NULL,
 			value Bytes,
@@ -135,7 +102,7 @@ func ensureTableExists(ctx context.Context, db *ydb.Driver, tableName string, lo
 			PRIMARY KEY (key)
 		)`, tableName)
 
-	err = db.Query().Exec(ctx, query)
+	err = db.Query().Exec(ctx, queryStmt)
 	if err != nil {
 		return fmt.Errorf("failed to create table %s: %w", tableName, err)
 	}
@@ -312,33 +279,34 @@ func (y *YDBBackend) DeleteInternal(ctx context.Context, key string) error {
 }
 
 type ydbTxWrapper struct {
-	tx    table.TransactionActor
+	tx    query.TxActor
 	table string
 }
 
 func (w *ydbTxWrapper) GetInternal(ctx context.Context, key string) (*physical.Entry, error) {
 	stmt := fmt.Sprintf("SELECT key, value FROM %s WHERE key = $key", w.table)
 	params := ydb.ParamsBuilder().Param("$key").Text(key).Build()
-	res, err := w.tx.Execute(ctx, stmt, params)
+
+	res, err := w.tx.Query(ctx, stmt, query.WithParameters(params))
 	if err != nil {
 		return nil, err
 	}
-	defer res.Close()
-	for res.NextResultSet(ctx) {
-		for res.NextRow() {
+	defer res.Close(ctx)
+
+	for rs, rerr := range res.ResultSets(ctx) {
+		if rerr != nil {
+			return nil, rerr
+		}
+		for row, rerr := range rs.Rows(ctx) {
+			if rerr != nil {
+				return nil, rerr
+			}
 			var k string
-			var v *[]byte
-			if err := res.Scan(&k, &v); err != nil {
+			var v []byte
+			if err := row.Scan(&k, &v); err != nil {
 				return nil, err
 			}
-			var val []byte
-			if v != nil {
-				val = *v
-			}
-			return &physical.Entry{Key: k, Value: val}, nil
-		}
-		if err := res.Err(); err != nil {
-			return nil, err
+			return &physical.Entry{Key: k, Value: v}, nil
 		}
 	}
 	return nil, nil
@@ -349,14 +317,14 @@ func (w *ydbTxWrapper) PutInternal(ctx context.Context, entry *physical.Entry) e
 	params := ydb.ParamsBuilder().
 		Param("$key").Text(entry.Key).
 		Param("$value").Bytes(entry.Value).Build()
-	_, err := w.tx.Execute(ctx, stmt, params)
+	err := w.tx.Exec(ctx, stmt, query.WithParameters(params))
 	return err
 }
 
 func (w *ydbTxWrapper) DeleteInternal(ctx context.Context, key string) error {
 	stmt := fmt.Sprintf("DELETE FROM %s WHERE key = $key", w.table)
 	params := ydb.ParamsBuilder().Param("$key").Text(key).Build()
-	_, err := w.tx.Execute(ctx, stmt, params)
+	err := w.tx.Exec(ctx, stmt, query.WithParameters(params))
 	return err
 }
 
@@ -364,12 +332,48 @@ func (y *YDBBackend) Transaction(ctx context.Context, txns []*physical.TxnEntry)
 	if len(txns) == 0 {
 		return nil
 	}
-	return y.db.Table().DoTx(ctx, func(ctx context.Context, tx table.TransactionActor) error {
+	return y.db.Query().DoTx(ctx, func(ctx context.Context, tx query.TxActor) error {
 		w := &ydbTxWrapper{tx: tx, table: y.table}
 		return physical.GenericTransactionHandler(ctx, w, txns)
 	})
 }
 
+// Return default transaction limits
 func (y *YDBBackend) TransactionLimits() (int, int) {
 	return 63, 128 * 1024
+}
+
+func getYDBOptionsFromConfMap(conf map[string]string) []ydb.Option {
+	var opts []ydb.Option
+
+	if v, ok := conf["token"]; ok && strings.TrimSpace(v) != "" {
+		opts = append(opts, ydb.WithAccessTokenCredentials(strings.TrimSpace(v)))
+	}
+
+	internalCAVal := ""
+	if v, ok := conf["internal_ca"]; ok {
+		internalCAVal = v
+	} else if envv := os.Getenv("VAULT_YDB_INTERNAL_CA"); envv != "" {
+		internalCAVal = envv
+	}
+	internalCA := false
+	if internalCAVal != "" && (strings.EqualFold(internalCAVal, "true") || internalCAVal == "1" || strings.EqualFold(internalCAVal, "yes")) {
+		internalCA = true
+	}
+
+	saKeyFile := ""
+	if v, ok := conf["service_account_key_file"]; ok && strings.TrimSpace(v) != "" {
+		saKeyFile = strings.TrimSpace(v)
+	} else if envv := os.Getenv("VAULT_YDB_SA_KEYFILE"); envv != "" {
+		saKeyFile = envv
+	}
+
+	if internalCA {
+		opts = append(opts, yc.WithInternalCA())
+	}
+	if saKeyFile != "" {
+		opts = append(opts, yc.WithServiceAccountKeyFileCredentials(saKeyFile))
+	}
+
+	return opts
 }
