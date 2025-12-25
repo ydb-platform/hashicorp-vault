@@ -15,7 +15,7 @@ on:
 
 jobs:
   plugin-update-check:
-    runs-on: ${{ github.repository == 'hashicorp/vault' && 'ubuntu-latest' || fromJSON('["self-hosted","ubuntu-latest-x64"]') }}
+    runs-on: "ubuntu-latest"
     env:
       PLUGIN_REPO: "${{inputs.repo}}"
       PLUGIN_BRANCH: "${{inputs.plugin_branch}}"
