@@ -135,7 +135,7 @@ func (y *YDBBackend) Put(ctx context.Context, entry *physical.Entry) error {
 }
 
 func (y *YDBBackend) Get(ctx context.Context, key string) (*physical.Entry, error) {
-	stmt := fmt.Sprintf("SELECT key, value FROM %s WHERE key = $key", y.table)
+	stmt := fmt.Sprintf("SELECT key AS Key, value AS Value FROM %s WHERE key = $key", y.table)
 	q, err := y.db.Query().QueryRow(ctx,
 		stmt,
 		query.WithParameters(
@@ -152,21 +152,13 @@ func (y *YDBBackend) Get(ctx context.Context, key string) (*physical.Entry, erro
 		return nil, nil
 	}
 
-	tmp := struct {
-		Key   string `sql:"key"`
-		Value []byte `sql:"value"`
-	}{}
-
-	if err = q.ScanStruct(&tmp); err != nil {
+	entry := physical.Entry{}
+	if err = q.ScanStruct(&entry, query.WithScanStructAllowMissingColumnsFromSelect()); err != nil {
 		errStr := "YDB: failed to get key " + key
 		y.logger.Error(errStr, "error", err)
 		return nil, fmt.Errorf(errStr+" %w", err)
 	}
 
-	entry := physical.Entry{
-		Key:   tmp.Key,
-		Value: tmp.Value,
-	}
 	return &entry, nil
 }
 
