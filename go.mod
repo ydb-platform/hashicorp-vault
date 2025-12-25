@@ -210,6 +210,9 @@ require (
 	github.com/shirou/gopsutil/v3 v3.22.6
 	github.com/stretchr/testify v1.11.1
 	github.com/tink-crypto/tink-go/v2 v2.4.0
+	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.1
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.117.2
+	github.com/ydb-platform/ydb-go-yc v0.12.3
 	go.etcd.io/bbolt v1.4.0
 	go.etcd.io/etcd/client/pkg/v3 v3.6.0
 	go.etcd.io/etcd/client/v2 v2.305.17
@@ -245,10 +248,14 @@ require (
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.1 // indirect
+	github.com/jonboulle/clockwork v0.5.0 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/minio/asm2plan9s v0.0.0-20200509001527-cdd76441f9d8 // indirect
 	github.com/minio/c2goasm v0.0.0-20190812172519-36a3d3bbc4f3 // indirect
 	github.com/moby/go-archive v0.1.0 // indirect
+	github.com/yandex-cloud/go-genproto v0.0.0-20240819112322-98a264d392f6 // indirect
+	github.com/ydb-platform/ydb-go-genproto v0.0.0-20250911135631-b3beddd517d9 // indirect
+	github.com/ydb-platform/ydb-go-yc-metadata v0.6.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/telemetry v0.0.0-20250908211612-aef8a434d053 // indirect
