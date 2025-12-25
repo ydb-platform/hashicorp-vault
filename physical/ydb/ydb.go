@@ -309,7 +309,8 @@ func (y *YDBBackend) Transaction(ctx context.Context, txns []*physical.TxnEntry)
 	})
 }
 
-// Return default transaction limits
+// Return default transaction limits.
+// See `sdk/physical/transactions.go`
 func (y *YDBBackend) TransactionLimits() (int, int) {
 	return 63, 128 * 1024
 }
