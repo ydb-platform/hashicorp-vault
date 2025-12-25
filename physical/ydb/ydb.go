@@ -178,32 +178,6 @@ func (y *YDBBackend) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-func sanitizeYqlValue(val string) string {
-	val = strings.TrimSpace(val)
-	if val == "" {
-		return val
-	}
-
-	if strings.HasSuffix(val, "u") || strings.HasSuffix(val, "U") {
-		val = strings.TrimSuffix(val, "u")
-		val = strings.TrimSuffix(val, "U")
-		val = strings.TrimSpace(val)
-	}
-
-	if i := strings.IndexAny(val, `"'`); i != -1 {
-		j := strings.LastIndexAny(val, `"'`)
-		if j > i {
-			return val[i+1 : j]
-		}
-
-		val = strings.ReplaceAll(val, `"`, "")
-		val = strings.ReplaceAll(val, `'`, "")
-	}
-
-	val = strings.Trim(val, `"' `)
-	return val
-}
-
 func (y *YDBBackend) List(ctx context.Context, prefix string) ([]string, error) {
 	errStr := "YDB: failed to list keys by prefix " + prefix
 	likePrefix := prefix + "%"
@@ -236,8 +210,8 @@ func (y *YDBBackend) List(ctx context.Context, prefix string) ([]string, error) 
 				return nil, fmt.Errorf(errStr+" %w", rerr)
 			}
 
-			val := row.Values()[0].Yql()
-			val = sanitizeYqlValue(val)
+			var val string
+			err = row.Scan(&val)
 
 			rel := val
 			if prefix != "" {
