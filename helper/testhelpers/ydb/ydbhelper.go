@@ -45,7 +45,7 @@ func PrepareTestContainer(t *testing.T) (func(), *Config) {
 		cfg := &Config{
 			DSN:       dsn,
 			Table:     os.Getenv("VAULT_YDB_TABLE"),
-			SAKeyFile: os.Getenv("VAULT_YDB_YC_SA_ACCOUNT_KEY_FILE_PATH"),
+			SAKeyFile: os.Getenv("VAULT_YDB_SA_KEYFILE"),
 		}
 		if cfg.Table == "" {
 			cfg.Table = "vault_kv"

@@ -31,21 +31,26 @@ var (
 )
 
 func NewYDBBackend(conf map[string]string, logger log.Logger) (physical.Backend, error) {
-	dsn := strings.TrimSpace(conf["dsn"])
-	if dsn == "" {
-		if envDSN := os.Getenv("VAULT_YDB_DSN"); envDSN != "" {
-			dsn = envDSN
-		} else {
+	// Environment variables take precedence over supplied configuration values.
+	// DSN: prefer VAULT_YDB_DSN if set, otherwise use conf["dsn"].
+	var dsn string
+	if envDSN := os.Getenv("VAULT_YDB_DSN"); envDSN != "" {
+		dsn = strings.TrimSpace(envDSN)
+	} else {
+		dsn = strings.TrimSpace(conf["dsn"])
+		if dsn == "" {
 			const errStr = "YDB: dsn is not set"
 			return &YDBBackend{}, fmt.Errorf(errStr)
 		}
 	}
 
-	table := strings.TrimSpace(conf["table"])
-	if table == "" {
-		if envTable := os.Getenv("VAULT_YDB_TABLE"); envTable != "" {
-			table = envTable
-		} else {
+	// Table: prefer VAULT_YDB_TABLE if set, otherwise use conf["table"], falling back to default.
+	var table string
+	if envTable := os.Getenv("VAULT_YDB_TABLE"); envTable != "" {
+		table = strings.TrimSpace(envTable)
+	} else {
+		table = strings.TrimSpace(conf["table"])
+		if table == "" {
 			table = VAULT_TABLE
 		}
 	}
@@ -54,6 +59,7 @@ func NewYDBBackend(conf map[string]string, logger log.Logger) (physical.Backend,
 
 	// Override from ENV
 	opts = append(opts, env.WithEnvironCredentials())
+
 	ctx := context.TODO()
 	db, err := ydb.Open(ctx, dsn, opts...)
 	if err != nil {
@@ -346,28 +352,36 @@ func (y *YDBBackend) TransactionLimits() (int, int) {
 func getYDBOptionsFromConfMap(conf map[string]string) []ydb.Option {
 	var opts []ydb.Option
 
-	if v, ok := conf["token"]; ok && strings.TrimSpace(v) != "" {
+	// Token: environment variables take precedence over configuration map.
+	if envv := os.Getenv("VAULT_YDB_TOKEN"); envv != "" {
+		opts = append(opts, ydb.WithAccessTokenCredentials(strings.TrimSpace(envv)))
+	} else if v, ok := conf["token"]; ok && strings.TrimSpace(v) != "" {
 		opts = append(opts, ydb.WithAccessTokenCredentials(strings.TrimSpace(v)))
 	}
 
+	// internal_ca: environment variable VAULT_YDB_INTERNAL_CA takes precedence
 	internalCAVal := ""
-	if v, ok := conf["internal_ca"]; ok {
-		internalCAVal = v
-	} else if envv := os.Getenv("VAULT_YDB_INTERNAL_CA"); envv != "" {
+	if envv := os.Getenv("VAULT_YDB_INTERNAL_CA"); envv != "" {
 		internalCAVal = envv
+	} else if v, ok := conf["internal_ca"]; ok {
+		internalCAVal = v
 	}
 	internalCA := false
 	if internalCAVal != "" && (strings.EqualFold(internalCAVal, "true") || internalCAVal == "1" || strings.EqualFold(internalCAVal, "yes")) {
 		internalCA = true
 	}
 
+	// service_account_key_file: environment variable VAULT_YDB_SA_KEYFILE takes precedence
 	saKeyFile := ""
-	if v, ok := conf["service_account_key_file"]; ok && strings.TrimSpace(v) != "" {
-		saKeyFile = strings.TrimSpace(v)
-	} else if envv := os.Getenv("VAULT_YDB_SA_KEYFILE"); envv != "" {
+	if envv := os.Getenv("VAULT_YDB_SA_KEYFILE"); envv != "" {
 		saKeyFile = envv
+	} else if v, ok := conf["service_account_key_file"]; ok && strings.TrimSpace(v) != "" {
+		saKeyFile = strings.TrimSpace(v)
 	}
 
+	// If YC-specific options are set, use the ydb-go-yc helper to configure them.
+	// This preserves previous behavior while letting explicit env vars override
+	// config map values.
 	if internalCA {
 		opts = append(opts, yc.WithInternalCA())
 	}

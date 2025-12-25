@@ -20,10 +20,8 @@ func TestYDBBackend(t *testing.T) {
 	logger.Info(fmt.Sprintf("YDB VAULT TABLE: %v", cfg.Table))
 
 	backend, err := NewYDBBackend(map[string]string{
-		"dsn":                      cfg.DSN,
-		"table":                    cfg.Table,
-		"internal_ca":              "no",
-		"service_account_key_file": cfg.SAKeyFile,
+		"dsn":   cfg.DSN,
+		"table": cfg.Table,
 	}, logger)
 	if err != nil {
 		t.Fatalf("Failed to create new backend: %v", err)

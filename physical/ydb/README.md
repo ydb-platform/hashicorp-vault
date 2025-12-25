@@ -23,18 +23,17 @@ The backend is configured via the map passed to `NewYDBBackend(conf map[string]s
 
 - `dsn` — YDB DSN (e.g. `grpc://host:port` or `grpcs://...`). If not provided in config, the code will look for `VAULT_YDB_DSN`.
 - `table` — YDB table name to use. If not provided, the code will look for `VAULT_YDB_TABLE` and otherwise use the default table name constant in the backend (`VAULT_TABLE`).
-- `internal_ca` — if set, enables the Yandex.Cloud internal CA helper (also can be set via `VAULT_YDB_INTERNAL_CA`).
-- `service_account_key_file` — path to a YC service account key file (also `VAULT_YDB_SA_KEYFILE`).
-- Additional YC-specific env var the helper recognizes when using GCP/YC auth: `VAULT_YDB_YC_SA_ACCOUNT_KEY_FILE_PATH` (used by test helper).
+- `token` — optional access token to authenticate to YDB. If not provided in the config map, a token may be read from the environment variable `VAULT_YDB_TOKEN`. Note: Yandex.Cloud-specific helper options such as `internal_ca` and `service_account_key_file` have been removed; if you require special TLS or service-account handling, provide credentials or TLS configuration externally.
 
 Example (Go-style config map shown for illustration):
 ```/dev/null/example.go#L1-12
+```
 // Example conf map passed to NewYDBBackend
 conf := map[string]string{
-    "dsn":                     "grpc://127.0.0.1:2136",
-    "table":                   "vault_kv",
-    "internal_ca":             "true", // optional
-    "service_account_key_file":"./sa-key.json",
+    "dsn":   "grpc://127.0.0.1:2136",
+    "table": "vault_kv",
+    // Optionally provide an access token instead of YC helpers:
+    // "token": "eyJhbGciOi...",
 }
 b, err := ydb.NewYDBBackend(conf, logger)
 ```
@@ -87,7 +86,7 @@ For CI:
 ## Troubleshooting / Notes
 
 - Scan behavior: The YDB Go SDK expects optional (nullable) byte columns to be scanned into pointer types (for example `*[]byte`). Scanning nullable byte columns into `[]byte` can produce "type *[]uint8 is not optional! use double pointer or sql.Scanner..." errors during transactional operations. The backend implementation scans into `*[]byte` and converts to `[]byte` before returning results to Vault.
-- Secure DSNs: If using `grpcs://` in your DSN and you need YC-specific auth (internal CA or service account), configure `internal_ca` and/or `service_account_key_file` as described above or set the corresponding environment variables.
+- Secure DSNs: If using `grpcs://` in your DSN and you need to provide credentials, supply an access token via the `token` config key or the `VAULT_YDB_TOKEN` environment variable, or configure TLS/CA externally. Yandex.Cloud-specific helper options have been removed from this implementation.
 - Table/schema readiness: The test helper creates the table and retries until the schema service is ready. In production environments ensure the table exists with the expected schema before starting Vault or plan for initial schema setup (the helper demonstrates a safe retry pattern).
 - Logs and debugging: Transaction failures surface via the YDB SDK errors; adding additional logging around transaction actor execution and query parameters may help debug intermittent issues, especially in CI.
 
