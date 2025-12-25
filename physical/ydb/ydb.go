@@ -87,21 +87,61 @@ func NewYDBBackend(conf map[string]string, logger log.Logger) (physical.Backend,
 		}
 	}
 
-	// Open YDB driver with options (may be empty)
-	db, err := ydb.Open(context.TODO(), dsn, opts...)
+	ctx := context.TODO()
+	db, err := ydb.Open(ctx, dsn, opts...)
 	if err != nil {
 		errStr := "YDB: failed to open database connection"
 		logger.Error(errStr, "error", err)
 		return &YDBBackend{}, fmt.Errorf(errStr+": %w", err)
 	}
 
-	// TODO: Ensure the table exists or create schema as required.
+	// Ensure the table exists or create schema as required.
+	if err = ensureTableExists(ctx, db, table, logger); err != nil {
+		errStr := "YDB: failed to ensure table exists"
+		logger.Error(errStr, "table", table, "error", err)
+		return &YDBBackend{}, fmt.Errorf(errStr+": %w", err)
+	}
 
 	return &YDBBackend{
 		db:     db,
 		table:  table,
 		logger: logger,
 	}, nil
+}
+
+func ensureTableExists(ctx context.Context, db *ydb.Driver, tableName string, logger log.Logger) error {
+	var fullTableName string
+	if strings.HasPrefix(tableName, "/") {
+		fullTableName = tableName
+	} else {
+		fullTableName = db.Name() + "/" + tableName
+	}
+
+	_, err := db.Scheme().DescribePath(ctx, fullTableName)
+	tableExists := err == nil
+
+	if tableExists {
+		logger.Info("YDB: table already exists", "table", tableName)
+		return nil
+	}
+
+	logger.Info("YDB: creating table", "table", tableName)
+
+	query := fmt.Sprintf(`
+		CREATE TABLE %s (
+			key Text NOT NULL,
+			value Bytes,
+			updated_at Timestamp,
+			PRIMARY KEY (key)
+		)`, tableName)
+
+	err = db.Query().Exec(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to create table %s: %w", tableName, err)
+	}
+
+	logger.Info("YDB: table created successfully", "table", tableName)
+	return nil
 }
 
 func (y *YDBBackend) Put(ctx context.Context, entry *physical.Entry) error {
