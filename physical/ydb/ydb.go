@@ -142,14 +142,13 @@ func (y *YDBBackend) Get(ctx context.Context, key string) (*physical.Entry, erro
 			ydb.ParamsBuilder().
 				Param("$key").Text(key).Build()),
 	)
-	if err != nil && !errors.Is(err, io.EOF) {
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, nil
+		}
 		errStr := "YDB: failed to get key " + key
 		y.logger.Error(errStr, "error", err)
 		return nil, fmt.Errorf(errStr+" %w", err)
-	}
-
-	if errors.Is(err, io.EOF) {
-		return nil, nil
 	}
 
 	entry := physical.Entry{}
