@@ -42,16 +42,31 @@ type Runner struct {
 }
 
 type RunOptions struct {
-	ImageRepo              string
-	ImageTag               string
-	ContainerName          string
-	Cmd                    []string
-	Entrypoint             []string
-	Env                    []string
-	NetworkName            string
-	NetworkID              string
-	CopyFromTo             map[string]string
-	Ports                  []string
+	ImageRepo     string
+	ImageTag      string
+	ContainerName string
+	// Hostname allows explicitly setting the container hostname. If empty,
+	// the runner will use ContainerName (with optional suffix) as the
+	// hostname when creating the container.
+	Hostname    string
+	Cmd         []string
+	Entrypoint  []string
+	Env         []string
+	NetworkName string
+	NetworkID   string
+	// NetworkMode allows specifying Docker network mode (for example "host").
+	// When set to "host" the runner will treat exposed ports as host ports and
+	// construct addresses accordingly.
+	NetworkMode string
+	CopyFromTo  map[string]string
+	// Ports is a list of container ports to expose in the form "1234/tcp".
+	Ports []string
+	// PortBindings allows explicitly mapping container ports to host ports.
+	// The map keys are container port specifications like "2136/tcp" and
+	// the values are the host port strings like "2136". When provided the
+	// runner will set Docker HostConfig.PortBindings accordingly and will not
+	// use publish-all-ports behavior.
+	PortBindings           map[string]string
 	DoNotAutoRemove        bool
 	AuthUsername           string
 	AuthPassword           string
@@ -65,6 +80,7 @@ type RunOptions struct {
 	VolumeNameToMountPoint map[string]string
 	Resources              container.Resources
 	ExtraHosts             []string
+	BindMounts             []string
 }
 
 func NewDockerAPI() (*client.Client, error) {
@@ -377,8 +393,13 @@ func (d *Runner) Start(ctx context.Context, addSuffix, forceLocalAddr bool) (*St
 		ref = fmt.Sprintf("%s@%s", d.RunOptions.ImageRepo, d.RunOptions.ImageTag)
 	}
 
+	hostname := name
+	if d.RunOptions.Hostname != "" {
+		hostname = d.RunOptions.Hostname
+	}
+
 	cfg := &container.Config{
-		Hostname: name,
+		Hostname: hostname,
 		Image:    ref,
 		Env:      d.RunOptions.Env,
 		Cmd:      d.RunOptions.Cmd,
@@ -398,13 +419,44 @@ func (d *Runner) Start(ctx context.Context, addSuffix, forceLocalAddr bool) (*St
 		PublishAllPorts: true,
 		Resources:       d.RunOptions.Resources,
 		ExtraHosts:      d.RunOptions.ExtraHosts,
+		NetworkMode:     container.NetworkMode(d.RunOptions.NetworkMode),
+	}
+	// If the runner was configured to use host networking, the container's ports
+	// are actually host ports. In that case we should not try to publish ports.
+	if d.RunOptions.NetworkMode == "host" {
+		hostConfig.PublishAllPorts = false
+	} else {
+		// When not using host networking, create explicit port bindings so the
+		// host port matches the container port. This ensures callers that expect
+		// specific host ports (like YDB tests) get stable 1:1 bindings.
+		if len(d.RunOptions.Ports) > 0 {
+			hostConfig.PortBindings = nat.PortMap{}
+			for _, p := range d.RunOptions.Ports {
+				// Expect port of the form "1234/tcp" or "1234/udp".
+				natPort := nat.Port(p)
+				parts := strings.Split(p, "/")
+				if len(parts) == 0 {
+					continue
+				}
+				hostPort := parts[0]
+				hostConfig.PortBindings[natPort] = []nat.PortBinding{
+					{
+						HostIP:   "0.0.0.0",
+						HostPort: hostPort,
+					},
+				}
+			}
+		}
 	}
 	if len(d.RunOptions.Capabilities) > 0 {
 		hostConfig.CapAdd = d.RunOptions.Capabilities
 	}
+	if len(d.RunOptions.BindMounts) > 0 {
+		hostConfig.Binds = append(hostConfig.Binds, d.RunOptions.BindMounts...)
+	}
 
 	netConfig := &network.NetworkingConfig{}
-	if d.RunOptions.NetworkID != "" {
+	if d.RunOptions.NetworkID != "" && d.RunOptions.NetworkMode != "host" {
 		netConfig.EndpointsConfig = map[string]*network.EndpointSettings{
 			d.RunOptions.NetworkID: {},
 		}
@@ -467,6 +519,11 @@ func (d *Runner) Start(ctx context.Context, addSuffix, forceLocalAddr bool) (*St
 		if len(pieces) < 2 {
 			return nil, fmt.Errorf("expected port of the form 1234/tcp, got: %s", port)
 		}
+		if d.RunOptions.NetworkMode == "host" {
+			addrs = append(addrs, fmt.Sprintf("127.0.0.1:%s", pieces[0]))
+			continue
+		}
+
 		if d.RunOptions.NetworkID != "" && !forceLocalAddr {
 			addrs = append(addrs, fmt.Sprintf("%s:%s", cfg.Hostname, pieces[0]))
 		} else {
@@ -479,7 +536,9 @@ func (d *Runner) Start(ctx context.Context, addSuffix, forceLocalAddr bool) (*St
 	}
 
 	var realIP string
-	if d.RunOptions.NetworkID == "" {
+	if d.RunOptions.NetworkMode == "host" {
+		realIP = "127.0.0.1"
+	} else if d.RunOptions.NetworkID == "" {
 		if len(inspect.NetworkSettings.Networks) > 1 {
 			return nil, fmt.Errorf("Set d.RunOptions.NetworkName instead for container with multiple networks: %v", inspect.NetworkSettings.Networks)
 		}
