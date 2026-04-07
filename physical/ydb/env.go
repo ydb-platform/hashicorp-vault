@@ -15,4 +15,6 @@ const (
 	EnvHAEnabled                 = "VAULT_YDB_HA_ENABLED"
 	EnvTransactionMaxEntries     = "VAULT_YDB_TRANSACTION_MAX_ENTRIES"
 	EnvTransactionMaxSize        = "VAULT_YDB_TRANSACTION_MAX_SIZE"
+
+	VAULT_TABLE = "vault_kv"
 )

@@ -15,8 +15,6 @@ import (
 	"github.com/ydb-platform/ydb-go-sdk/v3/query"
 )
 
-const VAULT_TABLE = "vault_kv"
-
 type YDBBackend struct {
 	db                    *ydb.Driver
 	table                 string
