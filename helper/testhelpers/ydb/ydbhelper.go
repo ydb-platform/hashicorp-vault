@@ -124,11 +124,8 @@ func PrepareTestContainer(t *testing.T) (func(), *Config) {
 		Env: []string{
 			"GRPC_PORT=2136",
 		},
-		ContainerName: "ydb",
-		Ports:         []string{"2136/tcp"},
-		PortBindings: map[string]string{
-			"2136/tcp": "2136",
-		},
+		ContainerName:   "ydb",
+		Ports:           []string{"2136/tcp"},
 		DoNotAutoRemove: false,
 	})
 	if err != nil {

@@ -239,18 +239,6 @@ func (y *YDBBackend) List(ctx context.Context, prefix string) ([]string, error) 
 	return lst, nil
 }
 
-func (y *YDBBackend) GetInternal(ctx context.Context, key string) (*physical.Entry, error) {
-	return y.Get(ctx, key)
-}
-
-func (y *YDBBackend) PutInternal(ctx context.Context, entry *physical.Entry) error {
-	return y.Put(ctx, entry)
-}
-
-func (y *YDBBackend) DeleteInternal(ctx context.Context, key string) error {
-	return y.Delete(ctx, key)
-}
-
 func quoteYDBIdentifier(identifier string) (string, error) {
 	identifier = strings.TrimSpace(identifier)
 	if identifier == "" {

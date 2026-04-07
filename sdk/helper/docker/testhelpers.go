@@ -45,19 +45,14 @@ type RunOptions struct {
 	ImageRepo     string
 	ImageTag      string
 	ContainerName string
-	// Hostname allows explicitly setting the container hostname. If empty,
-	// the runner will use ContainerName (with optional suffix) as the
-	// hostname when creating the container.
-	Hostname    string
-	Cmd         []string
-	Entrypoint  []string
-	Env         []string
-	NetworkName string
-	NetworkID   string
-	CopyFromTo  map[string]string
+	Cmd           []string
+	Entrypoint    []string
+	Env           []string
+	NetworkName   string
+	NetworkID     string
+	CopyFromTo    map[string]string
 	// Ports is a list of container ports to expose in the form "1234/tcp".
 	Ports                  []string
-	PortBindings           map[string]string
 	DoNotAutoRemove        bool
 	AuthUsername           string
 	AuthPassword           string
@@ -71,7 +66,6 @@ type RunOptions struct {
 	VolumeNameToMountPoint map[string]string
 	Resources              container.Resources
 	ExtraHosts             []string
-	BindMounts             []string
 }
 
 func NewDockerAPI() (*client.Client, error) {
@@ -384,13 +378,8 @@ func (d *Runner) Start(ctx context.Context, addSuffix, forceLocalAddr bool) (*St
 		ref = fmt.Sprintf("%s@%s", d.RunOptions.ImageRepo, d.RunOptions.ImageTag)
 	}
 
-	hostname := name
-	if d.RunOptions.Hostname != "" {
-		hostname = d.RunOptions.Hostname
-	}
-
 	cfg := &container.Config{
-		Hostname: hostname,
+		Hostname: name,
 		Image:    ref,
 		Env:      d.RunOptions.Env,
 		Cmd:      d.RunOptions.Cmd,
@@ -411,32 +400,9 @@ func (d *Runner) Start(ctx context.Context, addSuffix, forceLocalAddr bool) (*St
 		Resources:       d.RunOptions.Resources,
 		ExtraHosts:      d.RunOptions.ExtraHosts,
 	}
-	// Create explicit port bindings so the host port matches the container port.
-	// This ensures callers that expect specific host ports get stable 1:1
-	// bindings.
-	if len(d.RunOptions.Ports) > 0 {
-		hostConfig.PortBindings = nat.PortMap{}
-		for _, p := range d.RunOptions.Ports {
-			// Expect port of the form "1234/tcp" or "1234/udp".
-			natPort := nat.Port(p)
-			parts := strings.Split(p, "/")
-			if len(parts) == 0 {
-				continue
-			}
-			hostPort := parts[0]
-			hostConfig.PortBindings[natPort] = []nat.PortBinding{
-				{
-					HostIP:   "0.0.0.0",
-					HostPort: hostPort,
-				},
-			}
-		}
-	}
+
 	if len(d.RunOptions.Capabilities) > 0 {
 		hostConfig.CapAdd = d.RunOptions.Capabilities
-	}
-	if len(d.RunOptions.BindMounts) > 0 {
-		hostConfig.Binds = append(hostConfig.Binds, d.RunOptions.BindMounts...)
 	}
 
 	netConfig := &network.NetworkingConfig{}
