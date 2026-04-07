@@ -42,16 +42,15 @@ type Runner struct {
 }
 
 type RunOptions struct {
-	ImageRepo     string
-	ImageTag      string
-	ContainerName string
-	Cmd           []string
-	Entrypoint    []string
-	Env           []string
-	NetworkName   string
-	NetworkID     string
-	CopyFromTo    map[string]string
-	// Ports is a list of container ports to expose in the form "1234/tcp".
+	ImageRepo              string
+	ImageTag               string
+	ContainerName          string
+	Cmd                    []string
+	Entrypoint             []string
+	Env                    []string
+	NetworkName            string
+	NetworkID              string
+	CopyFromTo             map[string]string
 	Ports                  []string
 	DoNotAutoRemove        bool
 	AuthUsername           string
@@ -400,7 +399,6 @@ func (d *Runner) Start(ctx context.Context, addSuffix, forceLocalAddr bool) (*St
 		Resources:       d.RunOptions.Resources,
 		ExtraHosts:      d.RunOptions.ExtraHosts,
 	}
-
 	if len(d.RunOptions.Capabilities) > 0 {
 		hostConfig.CapAdd = d.RunOptions.Capabilities
 	}
@@ -439,7 +437,7 @@ func (d *Runner) Start(ctx context.Context, addSuffix, forceLocalAddr bool) (*St
 		})
 	}
 
-	c, err := d.DockerAPI.ContainerCreate(ctx, cfg, hostConfig, netConfig, nil, name)
+	c, err := d.DockerAPI.ContainerCreate(ctx, cfg, hostConfig, netConfig, nil, cfg.Hostname)
 	if err != nil {
 		return nil, fmt.Errorf("container create failed: %v", err)
 	}
@@ -469,7 +467,6 @@ func (d *Runner) Start(ctx context.Context, addSuffix, forceLocalAddr bool) (*St
 		if len(pieces) < 2 {
 			return nil, fmt.Errorf("expected port of the form 1234/tcp, got: %s", port)
 		}
-
 		if d.RunOptions.NetworkID != "" && !forceLocalAddr {
 			addrs = append(addrs, fmt.Sprintf("%s:%s", cfg.Hostname, pieces[0]))
 		} else {
