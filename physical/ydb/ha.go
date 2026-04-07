@@ -24,10 +24,8 @@ type ydbHALock struct {
 	value     string
 	semaphore string
 
-	mu      sync.Mutex
-	held    bool
-	session coordination.Session
-	lease   coordination.Lease
+	mu    sync.Mutex
+	lease coordination.Lease
 }
 
 func (y *YDBBackend) HAEnabled() bool {
@@ -47,42 +45,23 @@ func (l *ydbHALock) Lock(stopCh <-chan struct{}) (<-chan struct{}, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.held {
+	if l.lease != nil {
 		return nil, fmt.Errorf("lock already held")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), ydbHALockSessionTimeout)
 	defer cancel()
 
-	if err := l.backend.ensureCoordinationNodeExists(ctx); err != nil {
+	session, err := l.backend.newCoordinationSession(
+		ctx,
+		coordoptions.WithDescription("vault lock "+l.key),
+	)
+	if err != nil {
 		return nil, err
 	}
 
-	session, err := l.backend.db.Coordination().Session(
-		ctx,
-		l.backend.coordinationNode,
-		coordoptions.WithDescription("vault lock "+l.key),
-		coordoptions.WithSessionTimeout(ydbHALockSessionTimeout),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create coordination session: %w", err)
-	}
-
-	acquireCtx := context.Background()
-	acquireCancel := func() {}
-	acquireDone := make(chan struct{})
-	if stopCh != nil {
-		var cancel context.CancelFunc
-		acquireCtx, cancel = context.WithCancel(context.Background())
-		acquireCancel = cancel
-		go func() {
-			select {
-			case <-stopCh:
-				cancel()
-			case <-acquireDone:
-			}
-		}()
-	}
+	acquireCtx, acquireCancel := contextWithStopCh(stopCh)
+	defer acquireCancel()
 
 	lease, err := session.AcquireSemaphore(
 		acquireCtx,
@@ -91,18 +70,14 @@ func (l *ydbHALock) Lock(stopCh <-chan struct{}) (<-chan struct{}, error) {
 		coordoptions.WithEphemeral(true),
 		coordoptions.WithAcquireData([]byte(l.value)),
 	)
-	close(acquireDone)
-	acquireCancel()
 	if err != nil {
-		_ = session.Close(context.Background())
+		_ = closeCoordinationSession(session)
 		if stopCh != nil && errors.Is(err, context.Canceled) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to acquire coordination semaphore: %w", err)
 	}
 
-	l.held = true
-	l.session = session
 	l.lease = lease
 
 	return lease.Context().Done(), nil
@@ -110,28 +85,18 @@ func (l *ydbHALock) Lock(stopCh <-chan struct{}) (<-chan struct{}, error) {
 
 func (l *ydbHALock) Unlock() error {
 	l.mu.Lock()
-	if !l.held {
+	if l.lease == nil {
 		l.mu.Unlock()
 		return nil
 	}
 
 	lease := l.lease
-	session := l.session
-	l.held = false
 	l.lease = nil
-	l.session = nil
 	l.mu.Unlock()
 
-	var unlockErr error
-	if lease != nil {
-		unlockErr = lease.Release()
-	}
-	if session != nil {
-		closeCtx, cancel := context.WithTimeout(context.Background(), ydbHALockSessionTimeout)
-		defer cancel()
-		if err := session.Close(closeCtx); unlockErr == nil {
-			unlockErr = err
-		}
+	unlockErr := lease.Release()
+	if err := closeCoordinationSession(lease.Session()); unlockErr == nil {
+		unlockErr = err
 	}
 
 	return unlockErr
@@ -141,19 +106,11 @@ func (l *ydbHALock) Value() (bool, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), ydbHALockSessionTimeout)
 	defer cancel()
 
-	if err := l.backend.ensureCoordinationNodeExists(ctx); err != nil {
+	session, err := l.backend.newCoordinationSession(ctx)
+	if err != nil {
 		return false, "", err
 	}
-
-	session, err := l.backend.db.Coordination().Session(
-		ctx,
-		l.backend.coordinationNode,
-		coordoptions.WithSessionTimeout(ydbHALockSessionTimeout),
-	)
-	if err != nil {
-		return false, "", fmt.Errorf("failed to create coordination session: %w", err)
-	}
-	defer session.Close(context.Background())
+	defer closeCoordinationSession(session)
 
 	desc, err := session.DescribeSemaphore(ctx, l.semaphore, coordoptions.WithDescribeOwners(true))
 	if err != nil {
@@ -167,6 +124,44 @@ func (l *ydbHALock) Value() (bool, string, error) {
 	}
 
 	return true, string(desc.Owners[0].Data), nil
+}
+
+func (y *YDBBackend) newCoordinationSession(
+	ctx context.Context,
+	opts ...coordoptions.SessionOption,
+) (coordination.Session, error) {
+	if err := y.ensureCoordinationNodeExists(ctx); err != nil {
+		return nil, err
+	}
+
+	opts = append(opts, coordoptions.WithSessionTimeout(ydbHALockSessionTimeout))
+	session, err := y.db.Coordination().Session(ctx, y.coordinationNode, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create coordination session: %w", err)
+	}
+	return session, nil
+}
+
+func contextWithStopCh(stopCh <-chan struct{}) (context.Context, context.CancelFunc) {
+	if stopCh == nil {
+		return context.Background(), func() {}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		select {
+		case <-stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
+}
+
+func closeCoordinationSession(session coordination.Session) error {
+	closeCtx, cancel := context.WithTimeout(context.Background(), ydbHALockSessionTimeout)
+	defer cancel()
+	return session.Close(closeCtx)
 }
 
 func (y *YDBBackend) ensureCoordinationNodeExists(ctx context.Context) error {
