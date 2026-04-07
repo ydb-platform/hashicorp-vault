@@ -10,7 +10,6 @@ import (
 	"unicode"
 
 	log "github.com/hashicorp/go-hclog"
-	ydbconsts "github.com/hashicorp/vault/physical/ydb/consts"
 	"github.com/hashicorp/vault/sdk/physical"
 	ydb "github.com/ydb-platform/ydb-go-sdk/v3"
 	"github.com/ydb-platform/ydb-go-sdk/v3/query"
@@ -37,7 +36,7 @@ var (
 
 func NewYDBBackend(conf map[string]string, logger log.Logger) (physical.Backend, error) {
 	var dsn string
-	if envDSN := os.Getenv(ydbconsts.EnvDSN); envDSN != "" {
+	if envDSN := os.Getenv(EnvDSN); envDSN != "" {
 		dsn = strings.TrimSpace(envDSN)
 	} else {
 		dsn = strings.TrimSpace(conf["dsn"])
@@ -47,7 +46,7 @@ func NewYDBBackend(conf map[string]string, logger log.Logger) (physical.Backend,
 	}
 
 	var table string
-	if envTable := os.Getenv(ydbconsts.EnvTable); envTable != "" {
+	if envTable := os.Getenv(EnvTable); envTable != "" {
 		table = strings.TrimSpace(envTable)
 	} else {
 		table = strings.TrimSpace(conf["table"])

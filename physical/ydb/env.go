@@ -1,4 +1,4 @@
-package consts
+package ydb
 
 const (
 	EnvDSN                       = "VAULT_YDB_DSN"
