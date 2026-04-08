@@ -10,14 +10,18 @@ terraform {
 }
 
 # Generate matrix.json for gotestsum from the test list
+locals {
+  test_names = var.test_names != null ? var.test_names : []
+}
+
 resource "local_file" "test_matrix" {
   filename = "/tmp/vault_test_matrix_${random_string.test_id.result}.json"
   content = jsonencode({
-    include = length(var.test_names) > 0 ? [
-      for test in var.test_names : {
+    include = [
+      for test in local.test_names : {
         test = test
       }
-    ] : []
+    ]
   })
 }
 
@@ -33,7 +37,7 @@ resource "enos_local_exec" "run_blackbox_test" {
     VAULT_TOKEN        = var.vault_root_token
     VAULT_ADDR         = var.vault_addr != null ? var.vault_addr : "http://${var.leader_public_ip}:8200"
     VAULT_TEST_PACKAGE = var.test_package
-    VAULT_TEST_MATRIX  = length(var.test_names) > 0 ? local_file.test_matrix.filename : ""
+    VAULT_TEST_MATRIX  = length(local.test_names) > 0 ? local_file.test_matrix.filename : ""
     VAULT_EDITION      = var.vault_edition
     # PATH and Go-related environment variables are inherited from the calling process
     }, var.vault_namespace != null ? {
@@ -53,9 +57,10 @@ locals {
 
   # Set up LDAP environment variables when LDAP integration is available
   ldap_environment = try(local.ldap_config.domain, "") != "" ? {
-    LDAP_SERVER    = "ldap://${local.ldap_config.host.private_ip}:${local.ldap_config.port}"
-    LDAP_BIND_DN   = "cn=admin,${local.domain_dn}"
-    LDAP_BIND_PASS = local.ldap_config.admin_pw
+    LDAP_URL_PRIVATE = "ldap://${local.ldap_config.host.private_ip}:${local.ldap_config.port}"
+    LDAP_URL_PUBLIC  = "ldap://${local.ldap_config.host.public_ip}:${local.ldap_config.port}"
+    LDAP_BIND_DN     = "cn=admin,${local.domain_dn}"
+    LDAP_BIND_PASS   = local.ldap_config.admin_pw
   } : {}
 }
 

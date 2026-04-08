@@ -758,6 +758,16 @@ type TokenStore struct {
 func NewTokenStore(ctx context.Context, logger log.Logger, core *Core, config *logical.BackendConfig) (*TokenStore, error) {
 	// Create a sub-view
 	view := core.systemBarrierView.SubView(tokenSubPath)
+	if core.IsDRSecondary() {
+		// Generally speaking, DR secondaries do not handle requests using tokens
+		// from the TokenStore.  Requests to DR secondaries should either be
+		// unauthenticated, or use a batch token, or use a DR operation token
+		// created using the generate-operation-token api.  With the change to
+		// make generate-operation-token authenticated by default, we're now also
+		// allowing regular root tokens from the primary cluster to be used.
+		//
+		view.setReadOnlyErr(logical.ErrReadOnly)
+	}
 
 	// Initialize the store
 	t := &TokenStore{
@@ -1745,6 +1755,11 @@ func (ts *TokenStore) lookupInternal(ctx context.Context, id string, salted, tai
 		return entry, nil
 	}
 
+	if entry.IsRoot() {
+		// We don't need to check for persistence or expiration for root tokens.
+		return entry, nil
+	}
+
 	// Perform these checks on upgraded fields, but before persisting
 
 	// If we are still restoring the expiration manager, we want to ensure the
@@ -2669,6 +2684,10 @@ func (ts *TokenStore) handleCreate(ctx context.Context, req *logical.Request, d 
 
 // handleCreateCommon handles the auth/token/create path for creation of new tokens
 func (ts *TokenStore) handleCreateCommon(ctx context.Context, req *logical.Request, d *framework.FieldData, orphan bool, role *tsRoleEntry) (*logical.Response, error) {
+	if !orphan && IsEnterpriseToken(req.ClientToken) {
+		return logical.ErrorResponse("enterprise tokens cannot create child tokens"), logical.ErrInvalidRequest
+	}
+
 	// Read the parent policy
 	parent, err := ts.Lookup(ctx, req.ClientToken)
 	if err != nil {

@@ -21,6 +21,10 @@ func (c *Core) createAndStoreEnterpriseTokenEntry(ctx context.Context, req *logi
 	return nil
 }
 
+func isActivationFlagEnabledForEnterpriseToken(c *Core) bool {
+	return false
+}
+
 func getEnterpriseTokenMetadata(_ map[string]interface{}) string {
 	return ""
 }
@@ -35,6 +39,10 @@ func getEnterpriseTokenAudience(_ map[string]interface{}) []string {
 
 func getEnterpriseTokenAuthorizationDetails(_ map[string]interface{}) []logical.AuthorizationDetail {
 	return nil
+}
+
+func (c *Core) materializeEnterpriseTokenForUsage(_ context.Context, req *logical.Request, _ *logical.Auth, _ bool) (*logical.Request, error) {
+	return req, nil
 }
 
 func (c *Core) performSecondaryEntityTokenChecks(_ context.Context, _ *ACL, _ *identity.Entity, _ map[string][]string) (*ACL, error) {

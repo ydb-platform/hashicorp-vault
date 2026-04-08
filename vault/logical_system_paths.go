@@ -295,6 +295,8 @@ func (b *SystemBackend) configPaths() []*framework.Path {
 
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ReadOperation: &framework.PathOperation{
+					ForwardPerformanceStandby: true,
+					Callback:                  b.handleGenerateRootAttempt,
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationVerb:   "read",
 						OperationSuffix: "progress2|progress",
@@ -349,7 +351,9 @@ func (b *SystemBackend) configPaths() []*framework.Path {
 					},
 				},
 				logical.UpdateOperation: &framework.PathOperation{
-					Summary: "Initializes a new root generation attempt.",
+					ForwardPerformanceStandby: true,
+					Callback:                  b.handleGenerateRootAttempt,
+					Summary:                   "Initializes a new root generation attempt.",
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationVerb:   "initialize",
 						OperationSuffix: "2|",
@@ -404,6 +408,8 @@ func (b *SystemBackend) configPaths() []*framework.Path {
 					},
 				},
 				logical.DeleteOperation: &framework.PathOperation{
+					ForwardPerformanceStandby: true,
+					Callback:                  b.handleGenerateRootAttempt,
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationVerb:   "cancel",
 						OperationSuffix: "2|",
@@ -434,6 +440,8 @@ func (b *SystemBackend) configPaths() []*framework.Path {
 			},
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.UpdateOperation: &framework.PathOperation{
+					ForwardPerformanceStandby: true,
+					Callback:                  b.handleGenerateRootUpdate,
 					DisplayAttrs: &framework.DisplayAttributes{
 						OperationPrefix: "root-token-generation",
 						OperationVerb:   "update",

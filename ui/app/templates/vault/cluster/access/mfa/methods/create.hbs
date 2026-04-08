@@ -3,7 +3,7 @@
   SPDX-License-Identifier: BUSL-1.1
 }}
 
-<Page::Header @title={{if this.method (concat "Configure " this.method.name " MFA") "Multi-Factor Authentication"}}>
+<Page::Header @title={{if this.method (concat "Configure " this.method.name " MFA") "Multi-factor authentication"}}>
   <:breadcrumbs>
     <Page::Breadcrumbs
       @breadcrumbs={{array
@@ -21,7 +21,7 @@
   </:description>
 </Page::Header>
 
-<div class="has-top-padding-l">
+<div>
   {{#if this.showForms}}
     <h3 class="is-size-4 has-text-weight-semibold">Settings</h3>
     <p class="has-border-top-light has-top-padding-l">

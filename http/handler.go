@@ -21,8 +21,10 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"path"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/errwrap"
@@ -233,22 +235,52 @@ func (h HandlerFunc) Handler(props *vault.HandlerProperties) http.Handler {
 
 var _ vault.HandlerHandler = HandlerFunc(func(props *vault.HandlerProperties) http.Handler { return nil })
 
+type handlerSettings struct {
+	unauthRekey            bool
+	unauthGenerateRoot     bool
+	unauthDROperationToken bool
+}
+
+func getHandlerSettings(core *vault.Core) handlerSettings {
+	return handlerSettings{
+		unauthRekey:            core.GetEnableUnauthRekey(),
+		unauthGenerateRoot:     core.GetEnableUnauthGenerateRoot(),
+		unauthDROperationToken: core.GetEnableUnauthDROperationToken(),
+	}
+}
+
 // handler returns an http.Handler for the API. This can be used on
 // its own to mount the Vault API within another web server.
 func handler(props *vault.HandlerProperties) http.Handler {
-	handlerUnauth := handlerWithUnauthRekey(props, true)
-	handlerAuth := handlerWithUnauthRekey(props, false)
+	var l sync.RWMutex
+	settings := getHandlerSettings(props.Core)
+	hws := handlerWithSettings(props, settings)
 
 	return http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
-		if props.Core.GetEnableUnauthRekey() {
-			handlerUnauth.ServeHTTP(writer, req)
-		} else {
-			handlerAuth.ServeHTTP(writer, req)
+		newSettings := getHandlerSettings(props.Core)
+
+		l.RLock()
+		changed := settings != newSettings
+		// Create a local copy so that we don't have to hold the lock while
+		// running the handler
+		myhws := hws
+		l.RUnlock()
+
+		if changed {
+			l.Lock()
+			if settings != newSettings {
+				settings = newSettings
+				hws = handlerWithSettings(props, settings)
+				myhws = hws
+			}
+			l.Unlock()
 		}
+
+		myhws.ServeHTTP(writer, req)
 	})
 }
 
-func handlerWithUnauthRekey(props *vault.HandlerProperties, unauthRekey bool) http.Handler {
+func handlerWithSettings(props *vault.HandlerProperties, settings handlerSettings) http.Handler {
 	core := props.Core
 
 	// Create the muxer to handle the actual endpoints
@@ -284,14 +316,19 @@ func handlerWithUnauthRekey(props *vault.HandlerProperties, unauthRekey bool) ht
 			WithRedactClusterName(props.ListenerConfig.RedactClusterName),
 			WithRedactVersion(props.ListenerConfig.RedactVersion)))
 		mux.Handle("/v1/sys/monitor", handleLogicalNoForward(core, chrootNamespace))
-		mux.Handle("/v1/sys/generate-root/attempt", handleRequestForwarding(core,
-			handleAuditNonLogical(core, handleSysGenerateRootAttempt(core, vault.GenerateStandardRootTokenStrategy))))
-		mux.Handle("/v1/sys/generate-root/update", handleRequestForwarding(core,
-			handleAuditNonLogical(core, handleSysGenerateRootUpdate(core, vault.GenerateStandardRootTokenStrategy))))
+
+		// Register generate-root endpoints as unauthenticated handlers only if unauthGenerateRoot is true.
+		// When false, these endpoints will be handled by the sys backend as authenticated endpoints.
+		if settings.unauthGenerateRoot {
+			mux.Handle("/v1/sys/generate-root/attempt", handleRequestForwarding(core,
+				handleAuditNonLogical(core, handleSysGenerateRootAttempt(core, vault.GenerateStandardRootTokenStrategy))))
+			mux.Handle("/v1/sys/generate-root/update", handleRequestForwarding(core,
+				handleAuditNonLogical(core, handleSysGenerateRootUpdate(core, vault.GenerateStandardRootTokenStrategy))))
+		}
 
 		// Register rekey endpoints as unauthenticated handlers only if unauthRekey is true.
 		// When false (the default), these endpoints will be handled by the sys backend as authenticated endpoints.
-		if unauthRekey {
+		if settings.unauthRekey {
 			mux.Handle("/v1/sys/rekey/init", handleRequestForwarding(core, handleSysRekeyInit(core, false)))
 			mux.Handle("/v1/sys/rekey/update", handleRequestForwarding(core, handleSysRekeyUpdate(core, false)))
 			mux.Handle("/v1/sys/rekey/verify", handleRequestForwarding(core, handleSysRekeyVerify(core, false)))
@@ -346,7 +383,9 @@ func handlerWithUnauthRekey(props *vault.HandlerProperties, unauthRekey bool) ht
 		} else {
 			mux.Handle("/v1/sys/in-flight-req", handleLogicalNoForward(core, chrootNamespace))
 		}
-		entAdditionalRoutes(mux, core)
+		if settings.unauthDROperationToken {
+			entDROperationRoutes(mux, core)
+		}
 	}
 
 	// Build up a chain of wrapping handlers.
@@ -420,10 +459,7 @@ func (w *copyResponseWriter) WriteHeader(code int) {
 
 func handleAuditNonLogical(core *vault.Core, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origBody := new(bytes.Buffer)
-		reader := io.NopCloser(io.TeeReader(r.Body, origBody))
-		r.Body = reader
-		req, _, status, err := buildLogicalRequestNoAuth(core.PerfStandby(), core.RouterAccess(), w, r)
+		req, origBody, status, err := buildLogicalRequestNoAuth(core.PerfStandby(), core.RouterAccess(), w, r)
 		if err != nil || status != 0 {
 			respondError(w, status, err)
 			return
@@ -521,7 +557,36 @@ func wrapGenericHandler(core *vault.Core, h http.Handler, props *vault.HandlerPr
 
 		// Extract the namespace from the header before we modify it
 		ns := r.Header.Get(consts.NamespaceHeaderName)
+
+		originalPath := r.URL.Path
+		// cleanPath is copied directly from net/http/server.go
+		// it returns the canonical path for p, eliminating . and .. elements.
+		cleanPath := func(p string) string {
+			if p == "" {
+				return "/"
+			}
+			if p[0] != '/' {
+				p = "/" + p
+			}
+			np := path.Clean(p)
+			// path.Clean removes trailing slash except for root;
+			// put the trailing slash back if necessary.
+			if p[len(p)-1] == '/' && np != "/" {
+				// Fast path for common case of p being the string we want:
+				if len(p) == len(np)+1 && strings.HasPrefix(p, np) {
+					np = p
+				} else {
+					np += "/"
+				}
+			}
+			return np
+		}
+		cleanedPath := cleanPath(originalPath)
 		switch {
+		case originalPath != cleanedPath:
+			respondError(nw, http.StatusBadRequest, errors.New("vault request paths must be canonical and not relative"))
+			cancelFunc()
+			return
 		case strings.HasPrefix(r.URL.Path, "/v1/"):
 			// Setting the namespace in the header to be included in the error message
 			newR, status, err := adjustRequest(core, props.ListenerConfig, r)
